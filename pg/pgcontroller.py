@@ -1,6 +1,8 @@
 import logging
 import struct
 
+import crcmod
+
 from pg.pg_tcp import PGTCP
 from pg.pg_serial import PGSerial
 
@@ -10,6 +12,8 @@ logger = logging.getLogger("PGController")
 class PGController(object):
     def __init__(self):
         self._dev = None
+        self.crc16 = crcmod.mkCrcFun(0x18005, 0x0000, True) 
+        self._queue = b""
 
     def setup_serial(self, dev, timeout):
         self._dev = PGSerial(dev, timeout)
@@ -46,7 +50,7 @@ class PGController(object):
             self._dev.cleanup()
     
     def recv_packet(self):
-        cmd, data = self._dev.recv_packet()
+        cmd, data = self._recv()
         ans = self.parse_answer(cmd, data)
         logger.debug("received answer: %s", ans)
         return ans
@@ -63,9 +67,35 @@ class PGController(object):
         else:
             logger.warn("Slave did not acknowleged error")
             return False
-           
+
+    def _format(self, cmd, data=b""):
+        b = [] 
+        b.append(b'\x05\x0C')
+        dlen = struct.pack('B', len(data) + len(cmd))
+        b.append(dlen)
+        b.append(cmd)
+        b.append(data)
+        b = b"".join(b)
+        chcSum = int(self.crc16(b))
+        return b + struct.pack('H', chcSum) + b"\n"
+
+    def _recv(self):
+        logger.debug("reading 3 bytes")
+        data = self._dev.recv(3)
+        logger.debug("reading %s bytes", data[2])
+        data += self._dev.recv(data[2] + 2)
+        chcSum = int(self.crc16(data[:-2]))
+        if  chcSum != struct.unpack('H', data[-2:])[0]:
+            raise Exception("Wrong crc16")
+        #this is a good packet
+        #cmd = struct.unpack('<B', packet[3])[0]
+        cmd = data[3]
+        data = data[4:-2] 
+        return cmd, data
+
     def _send(self, cmd, data=b""):
-        self._dev.send_packet(cmd, data)
+        string = self._format(cmd, data)
+        self._dev.send(string)
         while True:
             ans = self.recv_packet()
             if ans.cmd == ord(cmd):
