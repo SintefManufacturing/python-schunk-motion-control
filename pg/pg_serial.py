@@ -3,10 +3,10 @@ import logging
 
 
 class PGSerial(object):
-    def __init__(self, comPort, timeout=16):
+    def __init__(self, comPort):
         self.logger = logging.getLogger(self.__class__.__name__)
         self._ser = serial.Serial(comPort, 9600)
-        self._ser.setTimeout(timeout)
+        self._ser.setTimeout(None)
         self._ser.flush()
         self.logger.debug("%s is open", self._ser.portstr)
 
@@ -21,8 +21,8 @@ class PGSerial(object):
         self.logger.debug("sending %s", data)
         self._ser.write(data)
 
-    def cleanup(self):
-        self._ser.flush()
+    def stop(self):
+        self._ser.close()
 
 
 

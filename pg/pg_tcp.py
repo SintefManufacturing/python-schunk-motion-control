@@ -8,9 +8,9 @@ class PGTCP(object):
     """
     Serial connection over TCP bridge (tested with landtronix)
     """
-    def __init__(self, ipport, timeout):
+    def __init__(self, ipport):
         self.logger = logging.getLogger(self.__class__.__name__)
-        self._sock = socket.create_connection(ipport, timeout=2)
+        self._sock = socket.create_connection(ipport, timeout=0)
         #self._sock.setblocking(False)
         self.logger.info(' %s is open', self._sock.getsockname())
         self.timeout = timeout
@@ -34,7 +34,7 @@ class PGTCP(object):
 
     def cleanup(self):
         if self._sock:
-            self._sock.close()
+            self._sock.shudown(socket.SHUT_RDWR)
 
 
 

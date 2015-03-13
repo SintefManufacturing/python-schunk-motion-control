@@ -1,5 +1,6 @@
 import logging
 import struct
+from threading import Thread, Lock, Condition
 
 import crcmod
 
@@ -9,20 +10,74 @@ from pg.pg_serial import PGSerial
 
 logger = logging.getLogger("PGController")
 
-class PGController(object):
+class CmdLock(object):#FIXME: bad name
     def __init__(self):
+        self.cond = Condition()
+        self.data = b''
+
+class CmdConditions(object):#FIXME: bad name
+    def __init__(self):
+        self.logger = logging.getLogger(self.__class__.__name__)
+        self._conds = {}
+
+    def wait_for(self, cmd):
+        self.logger.debug("waiting for %s", cmd)
+        cmdlock = self._get_cond(cmd)
+        with cmdlock.cond:
+            cmdlock.cond.wait() 
+            self.logger.debug("wait finished for %s, returning data", cmd)
+            return cmdlock.data
+
+    def notify(self, cmd, data):
+        cmdlock = self._get_cond(cmd)
+        with cmdlock.cond:
+            self.logger.debug("received data for cmd %s, notify all listeners", cmd)
+            cmdlock.data = data
+            cmdlock.cond.notify_all() 
+
+    def _get_cond(self, cmd):
+        if type(cmd) == int:
+            cmd = struct.pack("B", cmd)
+        if not cmd in self._conds:
+            self._conds[cmd] = CmdLock() 
+        return self._conds[cmd]
+    
+    def wake_all(self):
+        for cond in self._conds.values():
+            with cond.cond:
+                cond.cond.notify_all()
+
+
+class PGController(Thread):
+    def __init__(self):
+        Thread.__init__(self)
         self._dev = None
         self.crc16 = crcmod.mkCrcFun(0x18005, 0x0000, True) 
         self._queue = b""
+        self._cmdcond = CmdConditions()
+        self._stopev = False
 
-    def setup_serial(self, dev, timeout):
-        self._dev = PGSerial(dev, timeout)
+    def run(self):
+        while not self._stopev:
+            cmd, data = self._recv()
+            ans = self.parse_answer(cmd, data)
+            logger.debug("received answer: %s", ans)
+            self._cmdcond.notify(cmd, ans)
+        logger.debug("Receiving thread ended")
 
-    def setup_tcp(self, ipport, timeout):
-        self._dev = PGTCP(ipport, timeout)
-        #state = self.get_state()
-        #if state.state["Error"] != 0:
-            #self.quit_error()
+    def close(self):
+        self._stopev = True
+        self.stop()
+        self._dev.stop()
+        #self._cmdcond.wake_all()
+
+    def setup_serial(self, dev):
+        self._dev = PGSerial(dev)
+        self.start()
+
+    def setup_tcp(self, ipport):
+        self._dev = PGTCP(ipport)
+        self.start()
 
     def parse_answer(self, cmd, data):
         if cmd == 0x95: #this is state packet
@@ -45,18 +100,14 @@ class PGController(object):
             logger.warn("command %s not supported yet", cmd)
             return Answer(cmd, data)
 
-    def cleanup(self):
-        if self._dev:
-            self._dev.cleanup()
-    
-    def recv_packet(self):
-        cmd, data = self._recv()
-        ans = self.parse_answer(cmd, data)
-        logger.debug("received answer: %s", ans)
-        return ans
+    #def recv_packet(self):
+        #cmd, data = self._recv()
+        #ans = self.parse_answer(cmd, data)
+        #logger.debug("received answer: %s", ans)
+        #return ans
 
 
-    def quit_error(self):
+    def ack(self):
         """
         This is necessary if a cmd error has occured
         """
@@ -87,8 +138,6 @@ class PGController(object):
         chcSum = int(self.crc16(data[:-2]))
         if  chcSum != struct.unpack('H', data[-2:])[0]:
             raise Exception("Wrong crc16")
-        #this is a good packet
-        #cmd = struct.unpack('<B', packet[3])[0]
         cmd = data[3]
         data = data[4:-2] 
         return cmd, data
@@ -96,10 +145,11 @@ class PGController(object):
     def _send(self, cmd, data=b""):
         string = self._format(cmd, data)
         self._dev.send(string)
-        while True:
-            ans = self.recv_packet()
-            if ans.cmd == ord(cmd):
-                return ans
+        return self._cmdcond.wait_for(cmd)
+
+    def _send_async(self, cmd, data=b""):
+        string = self._format(cmd, data)
+        self._dev.send(string)
 
     def get_config(self):
         return self._send(b'\x80', b'\xFE')
@@ -111,16 +161,31 @@ class PGController(object):
     def set_ref(self):
         return self._send(b'\x92')
                 
-    def set_pos(self, pos, vel=50.0, acc=50, current=1):
+    def move_pos(self, pos, vel=50.0, acc=50, current=1):
         """
-        set position
-        another package will be send when the position is reached
+        set position, return immediatly
         """
         data = struct.pack('<4f', pos, vel, acc, current)
         return self._send(b'\xB0', data)
-        
+
+    def move_pos_blocking(self, pos, vel=50.0, acc=50, current=1):
+        """
+        set position
+        return when move has finished
+        """
+        data = struct.pack('<4f', pos, vel, acc, current)
+        self._send_async(b'\xB0', data)
+        return self._cmdcond.wait_for(b'\x94')
+ 
+    def stop(self):
+        return self._send(b'\x91')
+
     def estop(self):
         return self._send(b'\x90')
+
+
+    def stop_async(self):
+        self._send_async(b'\x91')
 
 
 
