@@ -6,9 +6,9 @@ from pg.pgcontroller import PGController
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
     p = PGController()
-    state = p.setup_serial("/dev/ttyUSB0")
+    p.setup_serial("/dev/ttyUSB0")
     try:
-        print(state)
+        p.get_state()
         #p.setRef()
         #p.recvPacket()
         #p.recvPacket()

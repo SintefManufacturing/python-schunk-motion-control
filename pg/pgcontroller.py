@@ -1,3 +1,4 @@
+import time
 import logging
 import struct
 from threading import Thread, Lock, Condition
@@ -67,7 +68,8 @@ class PGController(Thread):
 
     def close(self):
         self._stopev = True
-        self.stop()
+        self.stop_async()
+        time.sleep(0.5)# let our dev send the message before we close
         self._dev.stop()
         #self._cmdcond.wake_all()
 
@@ -92,6 +94,8 @@ class PGController(Thread):
             return PosCmd(cmd, data)
         elif cmd == 0x92:
             return RefCmd(cmd, data)
+        elif cmd == 0x91:
+            return StopCmd(cmd, data)
         elif cmd == 0x88: # cmd error, ths must be acknowledge with quit_error 
             return CmdError(cmd, data)
         elif cmd == 0x8b: # acknoeldge error
@@ -99,13 +103,6 @@ class PGController(Thread):
         else:
             logger.warn("command %s not supported yet", cmd)
             return Answer(cmd, data)
-
-    #def recv_packet(self):
-        #cmd, data = self._recv()
-        #ans = self.parse_answer(cmd, data)
-        #logger.debug("received answer: %s", ans)
-        #return ans
-
 
     def ack(self):
         """
@@ -229,42 +226,116 @@ class State(Answer):
             if test_bit(val, 7):
                 self.state["PositionReached"] = 1
             self.state["ErrorCode"] = data[1] 
+            self.state["ErrorString"] = error_codes[data[1]] 
 
     def __str__(self):
         return self.__class__.__name__ + str(self.state)
+    __repr__ = __str__
 
 class PosCompleted(Answer):
     def __init__(self, cmd, data):
         Answer.__init__(self, cmd, data)
         self.pos = struct.unpack("<f", data)[0]
 
+    def __str__(self):
+        return "PosCompleted: {}".format(self.pos)
+    __repr__ = __str__
+
 class PosObstructed(Answer):
     def __init__(self, cmd, data):
         Answer.__init__(self, cmd, data)
         self.data = data
         self.pos = struct.unpack("<f", data)[0]
+    def __str__(self):
+        return "PosObstructed: {}s".format(self.pos)
+    __repr__ = __str__
 
 class PosCmd(Answer):
     def __init__(self, cmd, data):
         Answer.__init__(self, cmd, data)
+        self.time = struct.unpack("<f", data)[0]
+    def __str__(self):
+        return "PosCmd: completed in {}s".format(self.time)
+    __repr__ = __str__
+
 
 
 class RefCmd(Answer):
-    def __init__(self, cmd, data):
-        Answer.__init__(self, cmd, data)
+    pass
 
 class CmdAck(Answer):
-    def __init__(self, cmd, data):
-        Answer.__init__(self, cmd, data)
+    pass
+
+class StopCmd(Answer):
+    pass
 
 class Config(Answer):
-    def __init__(self, cmd, data):
-        Answer.__init__(self, cmd, data)
-        # PG getConfig not  implemented yet"
+    pass
 
 class CmdError(Answer):
     def __init__(self, cmd, data):
         Answer.__init__(self, cmd, data)
         self.errorcode = data
+        i = struct.unpack("B", data)[0]
+        if i in error_codes:
+            self.errormsg = error_codes[struct.unpack("B", data)[0]]
+        else:
+            self.errormsg = "Unknown"
+    def __str__(self):
+        return "CmdError: {}, {}".format(self.errorcode, self.errormsg)
+    __repr__ = __str__
 
- 
+# from https://pypi.python.org/pypi/SchunkMotionProtocol/
+error_codes = {
+    0x00: "NO ERROR",  # not in Schunk manual; added for convenience
+    0x01: "INFO BOOT",
+    0x02: "INFO NO FREE SPACE",
+    0x03: "INFO NO RIGHTS",
+    0x04: "INFO UNKNOWN COMMAND",
+    0x05: "INFO FAILED",
+    0x06: "NOT REFERENCED",
+    0x07: "INFO SEARCH SINE VECTOR",
+    0x08: "INFO NO ERROR",
+    0x09: "INFO COMMUNICATION ERROR",
+    0x10: "INFO TIMEOUT",
+    0x16: "INFO WRONG BAUDRATE",
+    0x19: "INFO CHECKSUM",
+    0x1D: "INFO MESSAGE LENGTH",
+    0x1E: "INFO WRONG PARAMETER",
+    0x1F: "INFO PROGRAM END",
+    0x40: "INFO TRIGGER",
+    0x41: "INFO READY",
+    0x42: "INFO GUI CONNECTED",
+    0x43: "INFO GUI DISCONNECTED",
+    0x44: "INFO PROGRAM CHANGED",
+    0xC8: "ERROR WRONG RAMP TYPE",
+    0xD2: "ERROR CONFIG MEMORY",
+    0xD3: "ERROR PROGRAM MEMORY",
+    0xD4: "ERROR INVALID PHRASE",
+    0xD5: "ERROR SOFT LOW",
+    0xD6: "ERROR SOFT HIGH",
+    0xD7: "ERROR PRESSURE",
+    0xD8: "ERROR SERVICE",
+    0xD9: "ERROR EMERGENCY STOP",
+    0xDA: "ERROR TOW",
+    0xE4: "ERROR TOO FAST",
+    0xEC: "ERROR MATH",
+    0xDB: "ERROR VPC3",
+    0xDC: "ERROR FRAGMENTATION",
+    0xDD: "ERROR COMMUTATION",
+    0xDE: "ERROR CURRENT",
+    0xDF: "ERROR I2T",
+    0xE0: "ERROR INITIALIZE",
+    0xE1: "ERROR INTERNAL",
+    0xE2: "ERROR HARD LOW",
+    0xE3: "ERROR HARD HIGH",
+    0x70: "ERROR TEMP LOW",
+    0x71: "ERROR TEMP HIGH",
+    0x72: "ERROR LOGIC LOW",
+    0x73: "ERROR LOGIC HIGH",
+    0x74: "ERROR MOTOR VOLTAGE LOW",
+    0x75: "ERROR MOTOR VOLTAGE HIGH",
+    0x76: "ERROR CABLE BREAK",
+    0x78: "ERROR MOTOR TEMP",
+}
+

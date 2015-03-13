@@ -10,10 +10,9 @@ class PGTCP(object):
     """
     def __init__(self, ipport):
         self.logger = logging.getLogger(self.__class__.__name__)
-        self._sock = socket.create_connection(ipport, timeout=0)
+        self._sock = socket.create_connection(ipport)##, timeout=999)
         #self._sock.setblocking(False)
         self.logger.info(' %s is open', self._sock.getsockname())
-        self.timeout = timeout
 
     def recv(self, size):
         """
@@ -32,9 +31,9 @@ class PGTCP(object):
         self.logger.debug("Sending: %s", data)
         self._sock.send(data)
 
-    def cleanup(self):
+    def stop(self):
         if self._sock:
-            self._sock.shudown(socket.SHUT_RDWR)
+            self._sock.shutdown(socket.SHUT_RDWR)
 
 
 
