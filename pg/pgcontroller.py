@@ -1,7 +1,7 @@
 import time
 import logging
 import struct
-from threading import Thread, Lock, Condition
+from threading import Thread, Condition
 
 import crcmod
 
@@ -100,6 +100,10 @@ class PGController(Thread):
             return CmdError(cmd, data)
         elif cmd == 0x8b: # acknoeldge error
             return CmdAck(cmd, data)
+        elif cmd == 0xb7: 
+            return GripCmd(cmd, data)
+        elif cmd == 0x8a: 
+            return CmdInfo(cmd, data)
         else:
             logger.warn("command %s not supported yet", cmd)
             return Answer(cmd, data)
@@ -152,20 +156,21 @@ class PGController(Thread):
         return self._send(b'\x80', b'\xFE')
     
     def get_state(self):
-        return self._send(b'\x95', b'\x00\x00\x00\x00\x00')
+        data = struct.pack('<fB', 0.0, 0x01 | 0x02 | 0x04)
+        return self._send(b'\x95', data)
 
         
     def set_ref(self):
         return self._send(b'\x92')
                 
-    def move_pos(self, pos, vel=50.0, acc=50, current=1):
+    def move_pos(self, pos, vel=30.0, acc=50, current=1):
         """
         set position, return immediatly
         """
         data = struct.pack('<4f', pos, vel, acc, current)
         return self._send(b'\xB0', data)
 
-    def move_pos_blocking(self, pos, vel=50.0, acc=50, current=1):
+    def move_pos_blocking(self, pos, vel=30.0, acc=50, current=1):
         """
         set position
         return when move has finished
@@ -173,7 +178,26 @@ class PGController(Thread):
         data = struct.pack('<4f', pos, vel, acc, current)
         self._send_async(b'\xB0', data)
         return self._cmdcond.wait_for(b'\x94')
+
+    def move_grip_blocking(self, current=-0.6, maxvel=30.0):
+        """
+        grip until current reached (sign of current is direction)
+        return when move has finished
+        """
+        data = struct.pack('<2f', current, maxvel)
+        self._send_async(b'\xB7', data)
+        return self._cmdcond.wait_for(b'\x93')
+
+    def move_grip(self, current=-0.6, maxvel=50.0):
+        """
+        grip until current reached (sign of current is direction)
+        returns immediatly 
+        """
+        data = struct.pack('<2f', current, maxvel)
+        return self._send(b'\xB7', data)
  
+
+
     def stop(self):
         return self._send(b'\x91')
 
@@ -204,32 +228,27 @@ class State(Answer):
     def __init__(self, cmd, data):
         Answer.__init__(self, cmd, data)
         self.state = dict(Referenced=0, Moving=0, ProgramMode=0, Warning=0, Error=0, Brake=0, MoveEnd=0, PositionReached=0, ErrorCode=0)
-        if len(data) != 2:
-            logger.warn("Error, a state packet should be of length 2")
-        else:
-            #val = struct.unpack("<B", data[0])[0]
-            val = data[0]
-            if test_bit(val, 0):
-                self.state["Referenced"] = 1
-            if test_bit(val, 1):
-                self.state["Moving"] = 1
-            if test_bit(val, 2):
-                self.state["ProgramMode"] = 1
-            if test_bit(val, 3):
-                self.state["Warning"] = 1
-            if test_bit(val, 4):
-                self.state["Error"] = 1
-            if test_bit(val, 5):
-                self.state["Brake"] = 1
-            if test_bit(val, 6):
-                self.state["MoveEnd"] = 1
-            if test_bit(val, 7):
-                self.state["PositionReached"] = 1
-            self.state["ErrorCode"] = data[1] 
-            self.state["ErrorString"] = error_codes[data[1]] 
+        self.pos, self.vel, self.current, self.status, self.error = struct.unpack("3fBB", self.data)
+        if test_bit(self.status, 0):
+            self.state["Referenced"] = 1
+        if test_bit(self.status, 1):
+            self.state["Moving"] = 1
+        if test_bit(self.status, 2):
+            self.state["ProgramMode"] = 1
+        if test_bit(self.status, 3):
+            self.state["Warning"] = 1
+        if test_bit(self.status, 4):
+            self.state["Error"] = 1
+        if test_bit(self.status, 5):
+            self.state["Brake"] = 1
+        if test_bit(self.status, 6):
+            self.state["MoveEnd"] = 1
+        if test_bit(self.status, 7):
+            self.state["PositionReached"] = 1
+        self.errormsg = error_codes[self.error] 
 
     def __str__(self):
-        return self.__class__.__name__ + str(self.state)
+        return "State(pos:{}, vel:{}, current:{}, state:{}, errorcode:{}, errormsg:{})".format(self.pos, self.vel, self.current, self.state, self.error, self.errormsg)
     __repr__ = __str__
 
 class PosCompleted(Answer):
@@ -238,7 +257,7 @@ class PosCompleted(Answer):
         self.pos = struct.unpack("<f", data)[0]
 
     def __str__(self):
-        return "PosCompleted: {}".format(self.pos)
+        return "PosCompleted: {}mm".format(self.pos)
     __repr__ = __str__
 
 class PosObstructed(Answer):
@@ -247,7 +266,7 @@ class PosObstructed(Answer):
         self.data = data
         self.pos = struct.unpack("<f", data)[0]
     def __str__(self):
-        return "PosObstructed: {}s".format(self.pos)
+        return "PosObstructed: {}mm".format(self.pos)
     __repr__ = __str__
 
 class PosCmd(Answer):
@@ -272,6 +291,9 @@ class StopCmd(Answer):
 class Config(Answer):
     pass
 
+class GripCmd(Answer):
+    pass
+
 class CmdError(Answer):
     def __init__(self, cmd, data):
         Answer.__init__(self, cmd, data)
@@ -284,6 +306,12 @@ class CmdError(Answer):
     def __str__(self):
         return "CmdError: {}, {}".format(self.errorcode, self.errormsg)
     __repr__ = __str__
+
+
+class CmdInfo(Answer):
+    pass
+
+
 
 # from https://pypi.python.org/pypi/SchunkMotionProtocol/
 error_codes = {
