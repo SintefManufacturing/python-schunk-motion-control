@@ -58,6 +58,10 @@ class PGController(Thread):
         self._cmdcond = CmdConditions()
         self._stopev = False
 
+    def __str__(self):
+        return "PGController({})".format(self._dev)
+    __repr__ = __str__
+
     def run(self):
         while not self._stopev:
             cmd, data = self._recv()

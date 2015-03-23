@@ -10,6 +10,10 @@ class PGSerial(object):
         self._ser.flush()
         self.logger.debug("%s is open", self._ser.portstr)
 
+    def __str__(self):
+        return "Serial('{}')".format(self._ser.portstr)
+    __repr__ = __str__
+
     def recv(self, size):
         data = self._ser.read(size)
         self.logger.debug("received %s", data)

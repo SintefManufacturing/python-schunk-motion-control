@@ -8,7 +8,7 @@ if __name__ == "__main__":
     p = PGController()
     p.setup_serial("/dev/ttyUSB0")
     try:
-        p.get_state()
+        #p.get_state()
         #p.setRef()
         #p.recvPacket()
         #p.recvPacket()

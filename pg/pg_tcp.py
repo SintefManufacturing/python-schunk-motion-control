@@ -14,6 +14,10 @@ class PGTCP(object):
         #self._sock.setblocking(False)
         self.logger.info(' %s is open', self._sock.getsockname())
 
+    def __str__(self):
+        return "TCP('{}')".format(self._sock.getsockname())
+    __repr__ = __str__
+
     def recv(self, size):
         """
         Receive up to size bytes from socket
