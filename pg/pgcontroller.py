@@ -183,7 +183,7 @@ class PGController(Thread):
         self._send_async(b'\xB0', data)
         return self._cmdcond.wait_for(b'\x94')
 
-    def move_grip_blocking(self, current=-0.6, maxvel=30.0):
+    def move_grip_blocking(self, current=-0.8, maxvel=30.0):
         """
         grip until current reached (sign of current is direction)
         return when move has finished
@@ -200,8 +200,6 @@ class PGController(Thread):
         data = struct.pack('<2f', current, maxvel)
         return self._send(b'\xB7', data)
  
-
-
     def stop(self):
         return self._send(b'\x91')
 
@@ -276,7 +274,13 @@ class PosObstructed(Answer):
 class PosCmd(Answer):
     def __init__(self, cmd, data):
         Answer.__init__(self, cmd, data)
-        self.time = struct.unpack("<f", data)[0]
+        self.time = 0
+        try:
+            self.time = struct.unpack("<f", data)[0]
+        except struct.error as ex:
+            #print("Exception parsing time from data {} and size {}".format(data, len(data)))
+            logger.warn("Got data og size %s and data %s", len(data), data)
+            logger.warn("PosCmd Error code: %s", error_codes[data[0]])
     def __str__(self):
         return "PosCmd: completed in {}s".format(self.time)
     __repr__ = __str__
@@ -369,5 +373,6 @@ error_codes = {
     0x75: "ERROR MOTOR VOLTAGE HIGH",
     0x76: "ERROR CABLE BREAK",
     0x78: "ERROR MOTOR TEMP",
+    79: "UKNOWN ERROR FIXME "
 }
 
