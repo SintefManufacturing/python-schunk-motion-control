@@ -1,3 +1,7 @@
 python driver to control schunk device through serial.
 Similar to https://pypi.python.org/pypi/SchunkMotionProtocol/
-but opens connection only once and supports impulses
+but opens connection only once and supports impulses. It can also control a device
+through a tcp connection (need extra hardware)
+
+Is is not very well documented but very simpe. Look at the two example files and the very few
+exposed methods of the device object.
